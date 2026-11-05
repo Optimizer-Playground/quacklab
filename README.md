@@ -13,29 +13,24 @@ These branches are used to apply our quacklab patches to the specific DuckDB rel
 
 ## Installation
 
-quacklab can be installed like vanilla DuckDB with one caveat: we use [ANTLR](https://antlr.org) to generate the parser for
-the hint syntax. In turn, ANTLR requires a Java runtime to execute. To summarize, you need the following to build quacklab:
+quacklab can be installed like vanilla DuckDB. In short, you need the following to build quacklab:
 
 - a C++ compiler with support for C++ 17
 - CMake
 - although not strictly required, it is recommended to use Ninja as the build system. This automatically parallelizes the
   compilation process (see [DuckDB docs](https://github.com/duckdb/duckdb/blob/main/CONTRIBUTING.md#building))
-- a Java runtime for Java 11 or later
 
-Start the build by generating the hint parser:
-
-```bash
-cd third_party/antlr4
-java -jar antlr-4.13.2-complete.jar -Dlanguage=Cpp -Xexact-output-dir -o ../../src/hinting/grammar ../../src/hinting/grammar/HintBlock.g4
-```
-
-Afterwards, you can build quacklab like normal DuckDB:
+Once all requirements are satisfied, you can build quacklab like normal DuckDB:
 
 ```bash
 GEN=ninja make
 ```
 
 The DuckDB binary will be located in `build/release/duckdb` by default.
+
+If the underlying hint grammar was changed, you need to regenerate the parser before building quacklab.
+See the section below on _Updating the grammar_ for details. The most recent version of the grammar is checked
+into the repository, so you normally do not need to do anything.
 
 ## Usage
 
@@ -60,6 +55,17 @@ cardinalities refer to the _output cardinality_, i.e. after all applicable predi
 **`NestLoop`**, **`HashJoin`**, **`MergeJoin`** control the physical operator that is used to compute a particular join[^1].
 The syntax is `NestLoop(t1 t2 t3)`. Tables can be referenced by their name or alias.
 
+## Updating the grammar
+
+We use [ANTLR](https://antlr.org) to generate the parser for the hint syntax. In turn, ANTLR requires a Java runtime to execute.
+Make sure to have a JDK (version 11 or later) installed and available in your `PATH` before proceeding.
+
+Generate the hint parser like so:
+
+```bash
+cd third_party/antlr4
+java -jar antlr-4.13.2-complete.jar -Dlanguage=Cpp -Xexact-output-dir -o ../../src/hinting/grammar ../../src/hinting/grammar/HintBlock.g4
+```
 
 [^1]: support for this is currently very limited due to restrictions of the DuckDB execution engine. For example, join
       operators are not implemented as general-purpose operators. Instead, they are tied to specific types of join predicates.
