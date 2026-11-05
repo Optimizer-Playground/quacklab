@@ -2,17 +2,6 @@
 
 HintBlock.interp
 HintBlock.tokens
-
-HintBlockBaseListener.cpp
-HintBlockBaseListener.h
-
-HintBlockLexer.cpp
-HintBlockLexer.h
 HintBlockLexer.interp
 HintBlockLexer.tokens
 
-HintBlockListener.cpp
-HintBlockListener.h
-
-HintBlockParser.cpp
-HintBlockParser.h
