@@ -321,7 +321,8 @@ inline typename Container::value_type* get_data(Container& c) {
   return c.data();
 }
 
-#ifdef _SECURE_SCL
+// !!! quacklab addition: the original directive was just #ifdef _SECURE_SCL, but MSVC 2026 has removed checked_array_iterator
+#if defined(_SECURE_SCL) && _SECURE_SCL && (!defined(_MSC_VER) || _MSC_VER >= 1950)
 // Make a checked iterator to avoid MSVC warnings.
 template <typename T> using checked_ptr = stdext::checked_array_iterator<T*>;
 template <typename T> checked_ptr<T> make_checked(T* p, std::size_t size) {

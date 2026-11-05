@@ -26,7 +26,7 @@ Start the build by generating the hint parser:
 
 ```bash
 cd third_party/antlr4
-java -jar antlr-4.13.2-complete.jar ../../src/hinting/grammar/HintBlock.g4
+java -jar antlr-4.13.2-complete.jar -Dlanguage=Cpp -Xexact-output-dir -o ../../src/hinting/grammar ../../src/hinting/grammar/HintBlock.g4
 ```
 
 Afterwards, you can build quacklab like normal DuckDB:

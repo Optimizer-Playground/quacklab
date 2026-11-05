@@ -3,6 +3,8 @@
  * can be found in the LICENSE.txt file in the project root.
  */
 
+#include <chrono>	// !!! quacklab addition: VS 2026 does not (transitively) auto-include chrono any more
+
 #include "atn/PredicateEvalInfo.h"
 #include "atn/LookaheadEventInfo.h"
 #include "Parser.h"
