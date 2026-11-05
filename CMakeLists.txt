@@ -744,6 +744,9 @@ include_directories(third_party/yyjson/include)
 include_directories(third_party/zstd/include)
 include_directories(third_party/antlr4/runtime/src)  # !!! quacklab addition
 
+# !!! quacklab addition: we must link ANTLR statically for MSVC to not use dllimport
+add_compile_definitions(ANTLR4CPP_STATIC)
+
 # todo only regenerate ub file if one of the input files changed hack alert
 function(enable_unity_build UB_SUFFIX SOURCE_VARIABLE_NAME)
   set(files ${${SOURCE_VARIABLE_NAME}})
