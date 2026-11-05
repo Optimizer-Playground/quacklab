@@ -14,6 +14,8 @@
 #include "duckdb/planner/operator/logical_get.hpp"
 #include "duckdb/storage/statistics/numeric_stats.hpp"
 
+#include "duckdb/hinting/planner_hints.hpp" // !!! quacklab addition
+
 namespace duckdb {
 
 static idx_t CapMinMaxDistinctCount(uint64_t distinct_count, idx_t base_table_cardinality) {
@@ -136,6 +138,18 @@ RelationStats RelationStatisticsHelper::ExtractGetStats(LogicalGet &get, ClientC
 	auto base_table_cardinality = get.EstimateSourceCardinality(context);
 	auto cardinality_after_filters = base_table_cardinality;
 	result.table_name = get.GetTable() ? get.GetTable()->name : Identifier(get.GetName());
+
+	// !!! quacklab addition
+	auto planner_hints = tud::HintingContext::CurrentPlannerHints();
+	auto card_hint = planner_hints->GetCardinalityHint(get);
+	if (card_hint) {
+		result.cardinality = LossyNumericCast<idx_t>(card_hint.value());
+		result.stats_initialized = true;
+		get.estimated_cardinality = result.cardinality;
+		get.has_estimated_cardinality = true;
+		return result;
+	}
+	// !!! end quacklab addition
 
 	if (get.table_filters.HasFilters()) {
 		bool has_non_optional_filters = false;

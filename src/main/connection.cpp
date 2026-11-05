@@ -18,6 +18,8 @@
 #include "duckdb/planner/logical_operator.hpp"
 #include "duckdb/main/statement_iterator.hpp"
 
+#include "duckdb/hinting/planner_hints.hpp" // !!! quacklab addition
+
 namespace duckdb {
 
 Connection::Connection(DatabaseInstance &database) : Connection(database, ConnectionType::USER) {
@@ -339,6 +341,11 @@ unordered_set<string> Connection::GetTableNames(const string &query, const bool 
 }
 
 shared_ptr<Relation> Connection::RelationFromQuery(const string &query, const string &alias, const string &error) {
+	// !!! quacklab addition: the relation API is the other way a user query enters (it is what the Python
+	// client uses for sql()/query()/from_query()), and it does not go through ParseIterator.
+	tud::HintingContext::InitHints(query);
+	// !!! end quacklab addition
+
 	return RelationFromQuery(QueryRelation::ParseStatement(*context, query, error), alias);
 }
 

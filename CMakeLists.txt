@@ -1146,7 +1146,12 @@ if(NOT EXTENSION_CONFIG_BUILD)
   include_directories(third_party/vergesort)
   include_directories(third_party/yyjson/include)
   include_directories(third_party/zstd/include)
+  include_directories(third_party/antlr4/runtime/src) # !!! quacklab addition
 endif()
+
+# !!! quacklab addition: we must link ANTLR statically for MSVC to not use
+# dllimport
+add_compile_definitions(ANTLR4CPP_STATIC)
 
 # todo only regenerate ub file if one of the input files changed hack alert
 function(enable_unity_build UB_SUFFIX SOURCE_VARIABLE_NAME)
@@ -1397,6 +1402,7 @@ if(NOT EXTENSION_CONFIG_BUILD)
     add_third_party(utf8proc)
     add_third_party(yyjson)
     add_third_party(zstd)
+    add_third_party(antlr4) # !!! quacklab addition
   endif()
   if(NOT DUCKDB_EXPLICIT_PLATFORM)
     set(VERSION_SOURCES tools/utils/test_platform.cpp)

@@ -46,6 +46,7 @@ endfunction()
 
 add_definitions(-DDUCKDB_MAIN_LIBRARY)
 
+add_subdirectory(hinting)
 add_subdirectory(optimizer)
 add_subdirectory(planner)
 add_subdirectory(parser)
@@ -70,7 +71,8 @@ set(DUCKDB_LINK_LIBS
     duckdb_skiplistlib
     duckdb_mbedtls
     duckdb_yyjson
-    duckdb_zstd)
+    duckdb_zstd
+    antlr4_static) # !!! quacklab addition
 
 if(JEMALLOC_ENABLED)
   list(APPEND DUCKDB_LINK_LIBS duckdb_jemalloc)

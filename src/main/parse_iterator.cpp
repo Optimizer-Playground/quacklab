@@ -13,6 +13,8 @@
 #include "duckdb/parser/statement/create_statement.hpp"
 #include "duckdb/parser/parsed_data/create_info.hpp"
 
+#include "duckdb/hinting/planner_hints.hpp" // !!! quacklab addition
+
 namespace duckdb {
 
 ParseIterator::ParseIterator(ClientContext &context_p, const string &sql_p, bool apply_invalidation_policy_p,
@@ -20,6 +22,12 @@ ParseIterator::ParseIterator(ClientContext &context_p, const string &sql_p, bool
     : context(context_p), apply_invalidation_policy(apply_invalidation_policy_p), held_lock(held_lock_p) {
 	try {
 		sql = Parser::NormalizeSQLString(sql_p);
+
+		// !!! quacklab addition: every client query funnels through here, so this is where a hint block
+		// is picked up. Parser::ParseQuery is deliberately not hooked: it only runs for internal
+		// re-parses (views, macros, pragmas), which would otherwise reset the hints during binding.
+		tud::HintingContext::InitHints(sql);
+		// !!! end quacklab addition
 	} catch (std::exception &ex) {
 		ApplyInvalidationPolicy(ErrorData(ex));
 		throw;

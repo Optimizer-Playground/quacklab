@@ -18,11 +18,50 @@
 #include "duckdb/common/atomic.hpp"
 #include "duckdb/planner/joinside.hpp"
 
+#include "duckdb/hinting/planner_hints.hpp" // !!! quacklab addition
+
 namespace duckdb {
 static void RewriteJoinCondition(unique_ptr<Expression> &root_expr, idx_t offset) {
 	ExpressionIterator::VisitExpressionMutable<BoundReferenceExpression>(
 	    root_expr, [&](BoundReferenceExpression &ref, unique_ptr<Expression> &expr) { ref.IndexMutable() += offset; });
 }
+
+// !!! quacklab addition
+static PhysicalOperator &CreateHintedJoin(PhysicalPlanGenerator &generator, LogicalComparisonJoin &op,
+                                          tud::OperatorHint hint, PhysicalOperator &left, PhysicalOperator &right) {
+	D_ASSERT(hint != tud::OperatorHint::UNKNOWN);
+
+	switch (hint) {
+	case tud::OperatorHint::NLJ: {
+		if (PhysicalNestedLoopJoin::IsSupported(op.conditions, op.join_type)) {
+			return generator.Make<PhysicalNestedLoopJoin>(op, left, right, std::move(op.conditions), op.join_type,
+			                                              op.estimated_cardinality, std::move(op.filter_pushdown));
+		}
+
+		for (auto &cond : op.conditions) {
+			if (cond.IsComparison()) {
+				RewriteJoinCondition(cond.RightReference(), left.types.size());
+			}
+		}
+		auto condition = JoinCondition::CreateExpression(std::move(op.conditions));
+		return generator.Make<PhysicalBlockwiseNLJoin>(op, left, right, std::move(condition), op.join_type,
+		                                               op.estimated_cardinality);
+	}
+
+	case tud::OperatorHint::HASH_JOIN:
+		return generator.Make<PhysicalHashJoin>(
+		    op, left, right, std::move(op.conditions), op.join_type, op.left_projection_map, op.right_projection_map,
+		    std::move(op.mark_types), op.estimated_cardinality, std::move(op.filter_pushdown));
+
+	case tud::OperatorHint::MERGE_JOIN:
+		return generator.Make<PhysicalPiecewiseMergeJoin>(op, left, right, std::move(op.conditions), op.join_type,
+		                                                  op.estimated_cardinality, std::move(op.filter_pushdown));
+
+	default:
+		throw InternalException("Unsupported join hint");
+	}
+}
+// !!! end quacklab addition
 
 static optional_ptr<PhysicalRecursiveCTEStateScan>
 FindDirectRecursiveStateScan(PhysicalOperator &op,
@@ -177,6 +216,13 @@ CreateRecursiveKeyProbeNormalizers(ClientContext &context, const PhysicalRecursi
 PhysicalOperator &PhysicalPlanGenerator::PlanComparisonJoin(LogicalComparisonJoin &op) {
 	// now visit the children
 	D_ASSERT(op.children.size() == 2);
+
+	// !!! quacklab addition: this has to happen before the children are planned, because CreatePlan
+	// consumes them and the hint lookup walks the logical tree.
+	auto planner_hints = tud::HintingContext::CurrentPlannerHints();
+	auto join_hint = planner_hints->GetOperatorHint(op);
+	// !!! end quacklab addition
+
 	idx_t lhs_cardinality = op.children[0]->EstimateCardinality(context);
 	idx_t rhs_cardinality = op.children[1]->EstimateCardinality(context);
 	auto &left = CreatePlan(*op.children[0]);
@@ -217,6 +263,12 @@ PhysicalOperator &PhysicalPlanGenerator::PlanComparisonJoin(LogicalComparisonJoi
 		return Make<PhysicalCrossProduct>(op.types, left, right, op.estimated_cardinality);
 	}
 
+	// !!! quacklab addition
+	if (join_hint && join_hint.value() != tud::OperatorHint::UNKNOWN) {
+		return CreateHintedJoin(*this, op, join_hint.value(), left, right);
+	}
+	// !!! end quacklab addition
+
 	idx_t has_range = 0;
 	bool has_equality = op.HasEquality(has_range);
 	bool can_merge = has_range > 0;
@@ -236,10 +288,16 @@ PhysicalOperator &PhysicalPlanGenerator::PlanComparisonJoin(LogicalComparisonJoi
 		break;
 	}
 
+	// !!! quacklab addition
+	bool enable_hashjoin = planner_hints->GetOperatorEnabled(tud::OperatorHint::HASH_JOIN);
+	bool enable_mergejoin = planner_hints->GetOperatorEnabled(tud::OperatorHint::MERGE_JOIN);
+	bool enable_nestloop = planner_hints->GetOperatorEnabled(tud::OperatorHint::NLJ);
+	// !!! end quacklab addition
+
 	//	TODO: Extend PWMJ to handle all comparisons and projection maps
 	bool prefer_range_joins = Settings::Get<PreferRangeJoinsSetting>(context);
 	prefer_range_joins = prefer_range_joins && can_iejoin;
-	if (has_equality && !prefer_range_joins) {
+	if (has_equality && !prefer_range_joins && enable_hashjoin) { // !!! quacklab modification: added enable_hashjoin
 		// pass separately to PhysicalHashJoin
 		auto &join = Make<PhysicalHashJoin>(op, left, right, std::move(op.conditions), op.join_type,
 		                                    op.left_projection_map, op.right_projection_map, std::move(op.mark_types),
@@ -266,11 +324,18 @@ PhysicalOperator &PhysicalPlanGenerator::PlanComparisonJoin(LogicalComparisonJoi
 		return Make<PhysicalIEJoin>(op, left, right, std::move(op.conditions), op.join_type, op.estimated_cardinality,
 		                            std::move(op.filter_pushdown));
 	}
-	if (can_merge) {
+	if (can_merge && enable_mergejoin) { // !!! quacklab modification: added enable_mergejoin
 		// range join: use piecewise merge join
 		return Make<PhysicalPiecewiseMergeJoin>(op, left, right, std::move(op.conditions), op.join_type,
 		                                        op.estimated_cardinality, std::move(op.filter_pushdown));
 	}
+
+	// !!! quacklab addition
+	if (!enable_nestloop) {
+		throw InternalException("Nested Loop Join is disabled globally, cannot execute join");
+	}
+	// !!! end quacklab addition
+
 	if (PhysicalNestedLoopJoin::IsSupported(op.conditions, op.join_type)) {
 		// inequality join: use nested loop
 		D_ASSERT(op.left_projection_map.empty() || op.join_type == JoinType::MARK);

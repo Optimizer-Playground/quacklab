@@ -9,6 +9,8 @@
 #include "duckdb/planner/expression/list.hpp"
 #include "duckdb/planner/operator/list.hpp"
 
+#include "duckdb/hinting/planner_hints.hpp" // !!! quacklab addition
+
 namespace duckdb {
 
 static optional<RelationStats> CombineReorderableStats(const vector<ColumnBinding> &bindings,
@@ -85,7 +87,24 @@ unique_ptr<LogicalOperator> JoinOrderOptimizer::Optimize(unique_ptr<LogicalOpera
 
 		// Initialize the leaf/single node plans
 		plan_enumerator.InitLeafPlans();
-		if (plan_enumerator.SolveJoinOrder()) {
+
+		// !!! quacklab modification: originally just SolveJoinOrder()
+		// InitLeafPlans() above also primes the cardinality estimator, so it runs for hinted plans too.
+		// The hint then overwrites the plans that the enumerator would have produced.
+		auto planner_hints = tud::HintingContext::CurrentPlannerHints();
+		planner_hints->SetRelationMapping(query_graph_manager.relation_manager.relation_mapping);
+		auto joinorder_hint = planner_hints->GetJoinOrderHint();
+		bool solved;
+		if (joinorder_hint) {
+			auto join_hinting = tud::JoinOrderHinting(plan_enumerator);
+			join_hinting.MakeJoinNode(*joinorder_hint.value());
+			solved = true;
+		} else {
+			solved = plan_enumerator.SolveJoinOrder();
+		}
+		// !!! end quacklab modification
+
+		if (solved) {
 			// now reconstruct a logical plan from the query graph plan
 			query_graph_manager.plans = plan_enumerator.GetPlans();
 			new_logical_plan = query_graph_manager.Reconstruct(std::move(plan));

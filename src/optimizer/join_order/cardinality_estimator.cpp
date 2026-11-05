@@ -11,6 +11,8 @@
 #include "duckdb/planner/expression/bound_comparison_expression.hpp"
 #include "duckdb/storage/data_table.hpp"
 
+#include "duckdb/hinting/planner_hints.hpp" // !!! quacklab addition
+
 #include <math.h>
 
 namespace duckdb {
@@ -905,6 +907,15 @@ DenomInfo CardinalityEstimator::GetDenominator(JoinRelationSet &set) {
 // according to their output semantics. Non-equality predicates still use a heuristic total-domain penalty.
 template <>
 double CardinalityEstimator::EstimateCardinalityWithSet(JoinRelationSet &new_set) {
+	// !!! quacklab addition: a hinted cardinality is the final output cardinality, so it bypasses both the
+	// denominator model and the OR filter selectivities below.
+	auto planner_hints = tud::HintingContext::CurrentPlannerHints();
+	auto card_hint = planner_hints->GetCardinalityHint(new_set);
+	if (card_hint) {
+		return card_hint.value();
+	}
+	// !!! end quacklab addition
+
 	double result;
 	auto it = state->relation_set_2_cardinality.find(new_set);
 	if (it != state->relation_set_2_cardinality.end()) {

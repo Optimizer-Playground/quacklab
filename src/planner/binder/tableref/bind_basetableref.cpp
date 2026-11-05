@@ -17,6 +17,8 @@
 #include "duckdb/planner/tableref/bound_at_clause.hpp"
 #include "duckdb/execution/expression_executor.hpp"
 #include "duckdb/parser/query_node/cte_node.hpp"
+
+#include "duckdb/hinting/planner_hints.hpp" // !!! quacklab addition
 #include "duckdb/planner/operator/logical_dummy_scan.hpp"
 #include "duckdb/planner/operator/logical_secure_view.hpp"
 
@@ -299,6 +301,12 @@ BoundStatement Binder::Bind(BaseTableRef &ref) {
 		} else {
 			bind_context.AddBaseTable(table_index, ref.alias, table_names, table_types, col_ids, *table_entry);
 		}
+
+		// !!! quacklab addition
+		auto planner_hints = tud::HintingContext::CurrentPlannerHints();
+		planner_hints->RegisterBaseTable(ref, table_index);
+		// !!! end quacklab addition
+
 		BoundStatement result;
 		result.types = table_types;
 		result.names = table_names;

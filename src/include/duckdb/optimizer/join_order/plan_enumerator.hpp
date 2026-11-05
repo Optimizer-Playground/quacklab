@@ -22,11 +22,21 @@
 
 #include <functional>
 
+// !!! quacklab addition
+namespace tud {
+
+class JoinOrderHinting;
+
+}
+// !!! end quacklab addition
+
 namespace duckdb {
 
 class QueryGraphManager;
 
 class PlanEnumerator {
+	friend class tud::JoinOrderHinting; // !!! quacklab addition
+
 public:
 	explicit PlanEnumerator(QueryGraphManager &query_graph_manager, CostModel &cost_model,
 	                        const QueryGraphEdges &query_graph);
