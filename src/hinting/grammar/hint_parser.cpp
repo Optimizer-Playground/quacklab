@@ -129,7 +129,7 @@ private:
 
 void PlannerHints::ParseHints() {
     auto hintblock_start = raw_query_.find("/*=quack_lab=");
-    auto hintblock_end = raw_query_.find("*/");
+    auto hintblock_end = raw_query_.find("*/", hintblock_start + 1);
 
     if (hintblock_start == std::string::npos || hintblock_end == std::string::npos) {
         contains_hint_ = false;
