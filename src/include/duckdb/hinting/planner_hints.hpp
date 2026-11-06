@@ -10,6 +10,7 @@
 #include <unordered_map>
 #include <unordered_set>
 #include <utility>
+#include <vector>
 
 #include "duckdb/common/identifier.hpp"
 #include "duckdb/common/table_index.hpp"
@@ -114,6 +115,11 @@ public:
     void AddCardinalityHint(const std::unordered_set<std::string>& rels, double card);
 
     std::optional<double> GetCardinalityHint(const duckdb::JoinRelationSet &rels) const;
+
+    //! Join cardinality hints on proper subsets of rels. Base table hints are left out: they already enter
+    //! the estimate through the relation statistics.
+    std::vector<std::pair<std::unordered_set<duckdb::RelationIndex>, double>>
+    GetSubsetCardinalityHints(const duckdb::JoinRelationSet &rels) const;
 
     std::optional<double> GetCardinalityHint(const duckdb::LogicalGet &op) const;
 

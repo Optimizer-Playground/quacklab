@@ -908,14 +908,92 @@ DenomInfo CardinalityEstimator::GetDenominator(JoinRelationSet &set) {
 template <>
 double CardinalityEstimator::EstimateCardinalityWithSet(JoinRelationSet &new_set) {
 	// !!! quacklab addition: a hinted cardinality is the final output cardinality, so it bypasses both the
-	// denominator model and the OR filter selectivities below.
+	// denominator model and the OR filter selectivities. Without a hint on the set itself, hints on its
+	// subsets scale DuckDB's own estimate.
 	auto planner_hints = tud::HintingContext::CurrentPlannerHints();
 	auto card_hint = planner_hints->GetCardinalityHint(new_set);
 	if (card_hint) {
 		return card_hint.value();
 	}
-	// !!! end quacklab addition
+	return ApplySubsetCardinalityHints(new_set, EstimateUnhintedCardinality(new_set));
+}
 
+double CardinalityEstimator::ApplySubsetCardinalityHints(JoinRelationSet &new_set, double cardinality) {
+	auto planner_hints = tud::HintingContext::CurrentPlannerHints();
+	auto subset_hints = planner_hints->GetSubsetCardinalityHints(new_set);
+	if (subset_hints.empty()) {
+		return cardinality;
+	}
+
+	// The factor of a hinted subset is how far the hint moves DuckDB's estimate for that subset. Both
+	// estimates include the OR filter selectivities, which the hint already accounts for.
+	struct Candidate {
+		reference<JoinRelationSet> set;
+		double factor;
+	};
+	vector<Candidate> candidates;
+	for (auto &hint : subset_hints) {
+		auto &subset = set_manager.GetJoinRelation(hint.first);
+		auto subset_estimate = EstimateUnhintedCardinality(subset);
+		if (subset_estimate <= 0) {
+			continue;
+		}
+		candidates.push_back(Candidate {subset, hint.second / subset_estimate});
+	}
+
+	// Larger subsets first, ties go to the factor that yields the larger cardinality. Hints that overlap an
+	// already applied one are skipped. The relations themselves break any remaining tie deterministically.
+	std::sort(candidates.begin(), candidates.end(), [](const Candidate &a, const Candidate &b) {
+		auto &a_set = a.set.get();
+		auto &b_set = b.set.get();
+		if (a_set.count != b_set.count) {
+			return a_set.count > b_set.count;
+		}
+		if (a.factor != b.factor) {
+			return a.factor > b.factor;
+		}
+		for (idx_t i = 0; i < a_set.count; i++) {
+			if (a_set.relations[i] != b_set.relations[i]) {
+				return a_set.relations[i] < b_set.relations[i];
+			}
+		}
+		return false;
+	});
+
+	unordered_set<RelationIndex> covered;
+	bool applied = false;
+	for (auto &candidate : candidates) {
+		auto &subset = candidate.set.get();
+		bool overlaps = false;
+		for (idx_t i = 0; i < subset.count; i++) {
+			if (covered.find(subset.relations[i]) != covered.end()) {
+				overlaps = true;
+				break;
+			}
+		}
+		if (overlaps) {
+			continue;
+		}
+		for (idx_t i = 0; i < subset.count; i++) {
+			covered.insert(subset.relations[i]);
+		}
+		cardinality *= candidate.factor;
+		applied = true;
+	}
+
+	// Like DuckDB's filter selectivity heuristics, a scaled estimate never drops below one row, unless the
+	// unscaled estimate was zero to begin with.
+	if (applied && cardinality < 1) {
+		auto unscaled = EstimateUnhintedCardinality(new_set);
+		if (unscaled > 0) {
+			cardinality = 1;
+		}
+	}
+	return cardinality;
+}
+
+double CardinalityEstimator::EstimateUnhintedCardinality(JoinRelationSet &new_set) {
+	// !!! end quacklab addition
 	double result;
 	auto it = state->relation_set_2_cardinality.find(new_set);
 	if (it != state->relation_set_2_cardinality.end()) {

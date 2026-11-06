@@ -1,3 +1,4 @@
+#include <algorithm>
 
 #include <memory>
 #include <optional>
@@ -227,6 +228,28 @@ std::optional<double> PlannerHints::GetCardinalityHint(const duckdb::JoinRelatio
         return std::nullopt;
     }
     return card_hint->second;
+}
+
+std::vector<std::pair<std::unordered_set<duckdb::RelationIndex>, double>>
+PlannerHints::GetSubsetCardinalityHints(const duckdb::JoinRelationSet &rels) const {
+    std::vector<std::pair<std::unordered_set<duckdb::RelationIndex>, double>> result;
+    for (const auto &hint : relation_cardinality_hints_) {
+        const auto &hinted = hint.first.relations;
+        if (hinted.size() < 2 || hinted.size() >= rels.count) {
+            continue;
+        }
+        bool is_subset = true;
+        for (const auto &relid : hinted) {
+            if (!std::binary_search(rels.relations.get(), rels.relations.get() + rels.count, relid)) {
+                is_subset = false;
+                break;
+            }
+        }
+        if (is_subset) {
+            result.emplace_back(hinted, hint.second);
+        }
+    }
+    return result;
 }
 
 std::optional<double> PlannerHints::GetCardinalityHint(const duckdb::LogicalGet &op) const {

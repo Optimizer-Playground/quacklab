@@ -93,6 +93,13 @@ private:
 	void AddRelationStats(const FilterInfo &filter_info);
 	bool EmptyFilter(const FilterInfo &filter_info);
 
+	// !!! quacklab addition
+	//! DuckDB's own estimate for a set, ignoring cardinality hints on the set and its subsets.
+	double EstimateUnhintedCardinality(JoinRelationSet &new_set);
+	//! Scales an unhinted estimate by the cardinality hints on proper subsets of the set.
+	double ApplySubsetCardinalityHints(JoinRelationSet &new_set, double cardinality);
+	// !!! end quacklab addition
+
 private:
 	unique_ptr<CardinalityEstimatorState> state;
 	JoinRelationSetManager &set_manager;

@@ -1,0 +1,146 @@
+# name: test/sql/hinting/cardinality_hint_propagation.test
+# description: Card() hints on joins scale DuckDB's estimates for every larger intermediate that contains them
+# group: [hinting]
+
+# A hint on a set S is used as-is for S. For a larger set X without a hint of its own, DuckDB's estimate is scaled
+# by hint(S) / est(S) for the hinted subsets S. Larger subsets are applied first, among subsets of the same size the
+# larger factor wins, and subsets that overlap an applied one are skipped.
+#
+# The expected values below are derived from DuckDB's unhinted estimates, which are checked first. The JoinOrder
+# hints only fix the plan shape, so that the intermediates of interest show up in the plan.
+
+statement ok
+CREATE TABLE r(id INTEGER);
+
+statement ok
+CREATE TABLE s(rid INTEGER);
+
+statement ok
+CREATE TABLE t(rid INTEGER);
+
+statement ok
+CREATE TABLE u(rid INTEGER);
+
+statement ok
+INSERT INTO r SELECT range FROM range(100);
+
+statement ok
+INSERT INTO s SELECT range % 100 FROM range(5000);
+
+statement ok
+INSERT INTO t SELECT range % 100 FROM range(300);
+
+statement ok
+INSERT INTO u SELECT range % 100 FROM range(1000);
+
+#
+# unhinted estimates
+#
+
+# est(rs) = 5102, est(rst) = 15618
+query II
+EXPLAIN (FORMAT compact) /*=quack_lab= JoinOrder(((r s) t)) */ SELECT count(*) FROM r JOIN s ON r.id = s.rid JOIN t ON r.id = t.rid;
+----
+physical_plan	<REGEX>:.*\n  HASH_JOIN \(est=15618\) [^\n]*\n(    [^\n]*\n)*    HASH_JOIN \(est=5102\) .*
+
+# est(st) = 15306
+query II
+EXPLAIN (FORMAT compact) /*=quack_lab= JoinOrder(((s t) r)) */ SELECT count(*) FROM r JOIN s ON r.id = s.rid JOIN t ON r.id = t.rid;
+----
+physical_plan	<REGEX>:.*\n    HASH_JOIN \(est=15306\) .*
+
+# est(rs) = 5050, est(tu) = 3030, est(rstu) = 154591 (est(rs) differs from above: the query has another relation)
+query II
+EXPLAIN (FORMAT compact) /*=quack_lab= JoinOrder(((r s) (t u))) */ SELECT count(*) FROM r JOIN s ON r.id = s.rid JOIN t ON r.id = t.rid JOIN u ON r.id = u.rid;
+----
+physical_plan	<REGEX>:.*\n  HASH_JOIN \(est=154591\) [^\n]*\n    HASH_JOIN \(est=(5050|3030)\) [^\n]*\n(      [^\n]*\n)*    HASH_JOIN \(est=(5050|3030)\) .*
+
+# est(rst) = 15304
+query II
+EXPLAIN (FORMAT compact) /*=quack_lab= JoinOrder((((r s) t) u)) */ SELECT count(*) FROM r JOIN s ON r.id = s.rid JOIN t ON r.id = t.rid JOIN u ON r.id = u.rid;
+----
+physical_plan	<REGEX>:.*\n    HASH_JOIN \(est=15304\) .*
+
+#
+# a hint on a subset scales the estimate of the larger set
+#
+
+# 15618 * 10 / 5102 = 30.6
+query II
+EXPLAIN (FORMAT compact) /*=quack_lab= JoinOrder(((r s) t)) card(r s #10) */ SELECT count(*) FROM r JOIN s ON r.id = s.rid JOIN t ON r.id = t.rid;
+----
+physical_plan	<REGEX>:.*\n  HASH_JOIN \(est=30\) [^\n]*\n(    [^\n]*\n)*    HASH_JOIN \(est=10\) .*
+
+# the scaling applies to the set, not to a particular join tree: {r, s} is not an intermediate of this plan
+query II
+EXPLAIN (FORMAT compact) /*=quack_lab= JoinOrder(((s t) r)) card(r s #10) */ SELECT count(*) FROM r JOIN s ON r.id = s.rid JOIN t ON r.id = t.rid;
+----
+physical_plan	<REGEX>:.*\n  HASH_JOIN \(est=30\) .*
+
+# without a join order hint, the optimizer sees the same scaled estimate
+query II
+EXPLAIN (FORMAT compact) /*=quack_lab= card(r s #10) */ SELECT count(*) FROM r JOIN s ON r.id = s.rid JOIN t ON r.id = t.rid;
+----
+physical_plan	<REGEX>:.*\n  HASH_JOIN \(est=30\) .*
+
+# a hint on the set itself is used as-is
+query II
+EXPLAIN (FORMAT compact) /*=quack_lab= JoinOrder(((r s) t)) card(r s #10) card(r s t #77) */ SELECT count(*) FROM r JOIN s ON r.id = s.rid JOIN t ON r.id = t.rid;
+----
+physical_plan	<REGEX>:.*\n  HASH_JOIN \(est=77\) [^\n]*\n(    [^\n]*\n)*    HASH_JOIN \(est=10\) .*
+
+#
+# multiple hinted subsets
+#
+
+# disjoint subsets apply both factors: 154591 * (10 / 5050) * (30 / 3030) = 3.03
+query II
+EXPLAIN (FORMAT compact) /*=quack_lab= JoinOrder(((r s) (t u))) card(r s #10) card(t u #30) */ SELECT count(*) FROM r JOIN s ON r.id = s.rid JOIN t ON r.id = t.rid JOIN u ON r.id = u.rid;
+----
+physical_plan	<REGEX>:.*\n  HASH_JOIN \(est=3\) .*
+
+# overlapping subsets of the same size: the larger factor wins, 1000000 / 15306 over 10 / 5102.
+# ~15618 * 1000000 / ~15306 = 1020408 (the plan shows the estimates rounded down)
+query II
+EXPLAIN (FORMAT compact) /*=quack_lab= JoinOrder(((r s) t)) card(r s #10) card(s t #1000000) */ SELECT count(*) FROM r JOIN s ON r.id = s.rid JOIN t ON r.id = t.rid;
+----
+physical_plan	<REGEX>:.*\n  HASH_JOIN \(est=1020408\) .*
+
+# the order of the hints does not matter
+query II
+EXPLAIN (FORMAT compact) /*=quack_lab= JoinOrder(((r s) t)) card(s t #1000000) card(r s #10) */ SELECT count(*) FROM r JOIN s ON r.id = s.rid JOIN t ON r.id = t.rid;
+----
+physical_plan	<REGEX>:.*\n  HASH_JOIN \(est=1020408\) .*
+
+# overlapping subsets of different sizes: the larger subset wins, even with the smaller factor.
+# 154591 * 50 / 15304 = 505
+query II
+EXPLAIN (FORMAT compact) /*=quack_lab= JoinOrder((((r s) t) u)) card(r s t #50) card(s t #1000000) */ SELECT count(*) FROM r JOIN s ON r.id = s.rid JOIN t ON r.id = t.rid JOIN u ON r.id = u.rid;
+----
+physical_plan	<REGEX>:.*\n  HASH_JOIN \(est=505\) .*
+
+#
+# clamping
+#
+
+# a hint of zero is used as-is, but a scaled estimate does not drop below one row
+query II
+EXPLAIN (FORMAT compact) /*=quack_lab= JoinOrder(((r s) t)) card(r s #0) */ SELECT count(*) FROM r JOIN s ON r.id = s.rid JOIN t ON r.id = t.rid;
+----
+physical_plan	<REGEX>:.*\n  HASH_JOIN \(est=1\) [^\n]*\n(    [^\n]*\n)*    HASH_JOIN \(est=0\) .*
+
+#
+# base table hints
+#
+
+# base table hints enter DuckDB's estimate through the relation statistics and are not applied a second time
+query II
+EXPLAIN (FORMAT compact) /*=quack_lab= JoinOrder(((r s) t)) card(t #3) */ SELECT count(*) FROM r JOIN s ON r.id = s.rid JOIN t ON r.id = t.rid;
+----
+physical_plan	<REGEX>:.*\n  HASH_JOIN \(est=156\) .*
+
+# hints hold for the query result
+query I
+/*=quack_lab= card(r s #10) card(s t #1000000) card(t #3) */ SELECT count(*) FROM r JOIN s ON r.id = s.rid JOIN t ON r.id = t.rid;
+----
+15000
