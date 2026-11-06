@@ -2,7 +2,10 @@
 #include <memory>
 #include <optional>
 
+#include <vector>
+
 #include "duckdb/common/exception.hpp"
+#include "duckdb/common/string_util.hpp"
 
 #include "duckdb/hinting/intermediate.hpp"
 #include "duckdb/hinting/planner_hints.hpp"
@@ -42,6 +45,52 @@ std::unordered_set<duckdb::TableIndex> CollectOperatorRelids(const duckdb::Logic
 
 JoinOrderHinting::JoinOrderHinting(duckdb::PlanEnumerator &plan_enumerator)
     : plan_enumerator_(plan_enumerator) {}
+
+static void CollectLeaves(const JoinTree &jointree, std::vector<duckdb::TableIndex> &leaves) {
+    if (jointree.IsLeaf()) {
+        leaves.push_back(jointree.relid);
+        return;
+    }
+    CollectLeaves(*jointree.left, leaves);
+    CollectLeaves(*jointree.right, leaves);
+}
+
+void JoinOrderHinting::Validate(const JoinTree &jointree) {
+    auto &relation_manager = plan_enumerator_.query_graph_manager.relation_manager;
+
+    std::vector<duckdb::TableIndex> leaves;
+    CollectLeaves(jointree, leaves);
+
+    std::unordered_set<duckdb::RelationIndex> covered;
+    for (const auto &relid : leaves) {
+        auto relation_index = relation_manager.relation_mapping.find(relid);
+        if (relation_index == relation_manager.relation_mapping.end()) {
+            throw duckdb::InvalidInputException(
+                "JoinOrder hint refers to a relation that is not part of this join: table index %llu", relid.index);
+        }
+        if (!covered.insert(relation_index->second).second) {
+            throw duckdb::InvalidInputException("JoinOrder hint references the same relation more than once");
+        }
+    }
+
+    auto relation_stats = relation_manager.GetRelationStats();
+    if (covered.size() == relation_stats.size()) {
+        return;
+    }
+    duckdb::vector<std::string> missing;
+    for (duckdb::idx_t i = 0; i < relation_stats.size(); ++i) {
+        if (covered.find(duckdb::RelationIndex(i)) == covered.end()) {
+            missing.push_back(relation_stats[i].table_name.GetIdentifierName());
+        }
+    }
+    throw duckdb::InvalidInputException("JoinOrder hint must reference every relation of the join, missing: %s",
+                                        duckdb::StringUtil::Join(missing, ", "));
+}
+
+void JoinOrderHinting::Apply(const JoinTree &jointree) {
+    Validate(jointree);
+    MakeJoinNode(jointree);
+}
 
 
 duckdb::JoinRelationSet& JoinOrderHinting::MakeJoinNode(const JoinTree &jointree) {

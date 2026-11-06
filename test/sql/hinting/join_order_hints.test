@@ -120,3 +120,95 @@ statement error
 EXPLAIN /*=quack_lab= JoinOrder(((t nope) mi)) */ SELECT count(*) FROM t JOIN mi ON t.id = mi.movie_id;
 ----
 Table identifier not found
+
+# every invalid hint must fail with a regular error that leaves the connection usable
+query I
+SELECT count(*) FROM t JOIN mi ON t.id = mi.movie_id;
+----
+5000
+
+statement error
+EXPLAIN /*=quack_lab= JoinOrder((t mi)) */ SELECT count(*) FROM t JOIN mi ON t.id = mi.movie_id JOIN ci ON t.id = ci.movie_id;
+----
+JoinOrder hint must reference every relation of the join, missing: ci
+
+query I
+SELECT count(*) FROM t JOIN mi ON t.id = mi.movie_id;
+----
+5000
+
+statement error
+EXPLAIN /*=quack_lab= JoinOrder(((t mi) ci)) */ SELECT count(*) FROM t JOIN mi ON t.id = mi.movie_id JOIN ci ON t.id = ci.movie_id JOIN mk ON t.id = mk.movie_id;
+----
+JoinOrder hint must reference every relation of the join, missing: mk
+
+query I
+SELECT count(*) FROM t JOIN mi ON t.id = mi.movie_id;
+----
+5000
+
+statement error
+EXPLAIN /*=quack_lab= JoinOrder(((t t) mi)) */ SELECT count(*) FROM t JOIN mi ON t.id = mi.movie_id;
+----
+JoinOrder hint references the same relation more than once
+
+query I
+SELECT count(*) FROM t JOIN mi ON t.id = mi.movie_id;
+----
+5000
+
+statement error
+EXPLAIN /*=quack_lab= JoinOrder(((t mi) (t ci))) */ SELECT count(*) FROM t JOIN mi ON t.id = mi.movie_id JOIN ci ON t.id = ci.movie_id;
+----
+JoinOrder hint references the same relation more than once
+
+query I
+SELECT count(*) FROM t JOIN mi ON t.id = mi.movie_id;
+----
+5000
+
+# the hint is validated when the query runs, not only under EXPLAIN
+statement error
+/*=quack_lab= JoinOrder((t mi)) */ SELECT count(*) FROM t JOIN mi ON t.id = mi.movie_id JOIN ci ON t.id = ci.movie_id;
+----
+JoinOrder hint must reference every relation of the join, missing: ci
+
+query I
+SELECT count(*) FROM t JOIN mi ON t.id = mi.movie_id;
+----
+5000
+
+#
+# syntax errors in the hint block
+#
+
+# the outer parentheses are required
+statement error
+EXPLAIN /*=quack_lab= JoinOrder(t mi) */ SELECT count(*) FROM t JOIN mi ON t.id = mi.movie_id;
+----
+Syntax error in quack_lab hint block
+
+query I
+SELECT count(*) FROM t JOIN mi ON t.id = mi.movie_id;
+----
+5000
+
+statement error
+EXPLAIN /*=quack_lab= JoinOrder(((t))) */ SELECT * FROM t;
+----
+Syntax error in quack_lab hint block
+
+query I
+SELECT count(*) FROM t JOIN mi ON t.id = mi.movie_id;
+----
+5000
+
+statement error
+EXPLAIN /*=quack_lab= JoinOrder((t mi) */ SELECT count(*) FROM t JOIN mi ON t.id = mi.movie_id;
+----
+Syntax error in quack_lab hint block
+
+query I
+SELECT count(*) FROM t JOIN mi ON t.id = mi.movie_id;
+----
+5000

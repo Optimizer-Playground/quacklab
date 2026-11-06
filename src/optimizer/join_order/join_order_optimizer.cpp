@@ -97,7 +97,7 @@ unique_ptr<LogicalOperator> JoinOrderOptimizer::Optimize(unique_ptr<LogicalOpera
 		bool solved;
 		if (joinorder_hint) {
 			auto join_hinting = tud::JoinOrderHinting(plan_enumerator);
-			join_hinting.MakeJoinNode(*joinorder_hint.value());
+			join_hinting.Apply(*joinorder_hint.value());
 			solved = true;
 		} else {
 			solved = plan_enumerator.SolveJoinOrder();

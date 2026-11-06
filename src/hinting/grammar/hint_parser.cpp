@@ -5,6 +5,7 @@
 
 #include "duckdb/hinting/planner_hints.hpp"
 #include "duckdb/hinting/join_tree.hpp"
+#include "duckdb/common/exception.hpp"
 
 #include "antlr4-runtime.h"
 #include "HintBlockLexer.h"
@@ -13,6 +14,17 @@
 
 
 namespace tud {
+
+//! ANTLR recovers from syntax errors and hands the listener a partial parse tree, which the listener cannot
+//! handle. Fail on the first error instead.
+class ThrowingErrorListener : public antlr4::BaseErrorListener {
+public:
+    void syntaxError(antlr4::Recognizer *recognizer, antlr4::Token *offending_symbol, size_t line,
+                     size_t char_position, const std::string &msg, std::exception_ptr e) override {
+        throw duckdb::InvalidInputException("Syntax error in quack_lab hint block at offset %llu: %s",
+                                            static_cast<unsigned long long>(char_position), msg);
+    }
+};
 
 class HintParser : public HintBlockBaseListener {
 public:
@@ -128,9 +140,14 @@ void PlannerHints::ParseHints() {
     auto raw_hint = raw_query_.substr(hintblock_start, hintblock_end - hintblock_start + 2);
 
     antlr4::ANTLRInputStream parser_input(raw_hint);
+    ThrowingErrorListener error_listener;
     HintBlockLexer lexer(&parser_input);
+    lexer.removeErrorListeners();
+    lexer.addErrorListener(&error_listener);
     antlr4::CommonTokenStream tokens(&lexer);
     HintBlockParser parser(&tokens);
+    parser.removeErrorListeners();
+    parser.addErrorListener(&error_listener);
 
     antlr4::tree::ParseTree *tree = parser.hint_block();
     HintParser listener(*this);

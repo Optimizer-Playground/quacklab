@@ -48,9 +48,15 @@ class JoinOrderHinting {
 public:
     JoinOrderHinting(duckdb::PlanEnumerator &plan_enumerator);
 
+    //! Validates the hint against the relations of the current join and builds the hinted plan.
+    //! Throws InvalidInputException if the hint does not reference every relation exactly once.
+    void Apply(const JoinTree &jointree);
+
     duckdb::JoinRelationSet& MakeJoinNode(const JoinTree &jointree);
 
 private:
+    void Validate(const JoinTree &jointree);
+
     duckdb::PlanEnumerator &plan_enumerator_;
 
 };

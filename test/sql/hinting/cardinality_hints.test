@@ -130,3 +130,19 @@ statement error
 EXPLAIN /*=quack_lab= card(t nope #42) */ SELECT count(*) FROM t JOIN mi ON t.id = mi.movie_id;
 ----
 Relation name not found: nope
+
+# a malformed hint block fails with a regular error that leaves the connection usable
+statement error
+EXPLAIN /*=quack_lab= card(t 42) */ SELECT * FROM t;
+----
+Syntax error in quack_lab hint block
+
+statement error
+EXPLAIN /*=quack_lab= card(#42) */ SELECT * FROM t;
+----
+Syntax error in quack_lab hint block
+
+query I
+SELECT count(*) FROM t JOIN mi ON t.id = mi.movie_id;
+----
+5000
