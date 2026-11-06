@@ -1,5 +1,6 @@
 
 #include <memory>
+#include <stdexcept>
 #include <string>
 #include <unordered_set>
 
@@ -49,7 +50,8 @@ public:
         } else if (ctx->MERGEJOIN()) {
             ophint = OperatorHint::MERGE_JOIN;
         } else {
-            throw std::runtime_error("Join operator hint not supported. Currently must be one of: NESTLOOP, HASHJOIN, MERGEJOIN.");
+            throw duckdb::InvalidInputException(
+                "Join operator hint not supported. Currently must be one of: NESTLOOP, HASHJOIN, MERGEJOIN.");
         }
 
         planner_hints_.AddOperatorHint(relations, ophint);
@@ -62,7 +64,12 @@ public:
         }
 
         auto raw_card = ctx->INT()->getText();
-        double card = std::stod(raw_card);
+        double card;
+        try {
+            card = std::stod(raw_card);
+        } catch (const std::out_of_range &) {
+            throw duckdb::InvalidInputException("Cardinality hint out of range: %s", raw_card);
+        }
         planner_hints_.AddCardinalityHint(relations, card);
     }
 
@@ -81,7 +88,7 @@ public:
         } else if (raw_hint == "enable_mergejoin") {
             op = OperatorHint::MERGE_JOIN;
         } else {
-            throw std::runtime_error("Unknown SET parameter: " + raw_hint);
+            throw duckdb::InvalidInputException("Unknown SET parameter: %s", raw_hint);
         }
 
         auto raw_value = ctx->guc_value()->getText();
@@ -91,7 +98,7 @@ public:
         } else if (raw_value == "off" || raw_value == "false") {
             enabled = false;
         } else {
-            throw std::runtime_error("Invalid SET value: " + raw_value);
+            throw duckdb::InvalidInputException("Invalid SET value: %s", raw_value);
         }
 
         planner_hints_.AddGlobalOperatorHint(op, enabled);
@@ -113,7 +120,7 @@ private:
         auto relname = ctx->relation_id()->getText();
         auto relid = planner_hints_.ResolveRelid(relname);
         if (!relid) {
-            throw std::runtime_error("Table identifier not found");
+            throw duckdb::InvalidInputException("Table identifier not found");
         }
 
         return std::make_unique<JoinTree>(relid.value());

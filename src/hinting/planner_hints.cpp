@@ -173,7 +173,7 @@ std::unordered_set<duckdb::TableIndex> PlannerHints::ResolveRelids(const std::un
         if (it != relmap_.end()) {
             relids.insert(it->second);
         } else {
-            throw std::runtime_error("Relation name not found: " + relname);
+            throw duckdb::InvalidInputException("Relation name not found: %s", relname);
         }
     }
     return relids;
@@ -182,7 +182,7 @@ std::unordered_set<duckdb::TableIndex> PlannerHints::ResolveRelids(const std::un
 void PlannerHints::AddOperatorHint(const std::string &relname, OperatorHint hint) {
     auto relid = relmap_.find(duckdb::Identifier(relname));
     if (relid == relmap_.end()) {
-        throw std::runtime_error("Relation name not found: " + relname);
+        throw duckdb::InvalidInputException("Relation name not found: %s", relname);
     }
 
     auto intermediate = Intermediate{relid->second};
