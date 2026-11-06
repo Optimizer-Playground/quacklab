@@ -1,0 +1,132 @@
+# name: test/sql/hinting/cardinality_hints.test
+# description: Card() hints overwrite the cardinality estimates of base tables and joins
+# group: [hinting]
+
+statement ok
+CREATE TABLE t(id INTEGER);
+
+statement ok
+CREATE TABLE mi(movie_id INTEGER);
+
+# ids 0..999, of which only 0..99 have matches in mi (50 each)
+statement ok
+INSERT INTO t SELECT range FROM range(1000);
+
+statement ok
+INSERT INTO mi SELECT range % 100 FROM range(5000);
+
+# hints must never change the query result
+query I
+SELECT count(*) FROM t JOIN mi ON t.id = mi.movie_id;
+----
+5000
+
+query I
+/*=quack_lab= card(t #42) card(mi #24) card(t mi #7) */ SELECT count(*) FROM t JOIN mi ON t.id = mi.movie_id;
+----
+5000
+
+# unhinted baseline
+query II
+EXPLAIN (FORMAT compact) SELECT count(*) FROM t JOIN mi ON t.id = mi.movie_id;
+----
+physical_plan	<REGEX>:.*\n  HASH_JOIN \(est=5000\) .*
+
+#
+# base table hints
+#
+
+query II
+EXPLAIN (FORMAT compact) /*=quack_lab= card(t #42) */ SELECT * FROM t;
+----
+physical_plan	<REGEX>:.*SEQ_SCAN \(est=42\) [^\n]*Table: memory\.main\.t;.*
+
+# the hint is the output cardinality, so it replaces the filter selectivity estimate
+query II
+EXPLAIN (FORMAT compact) /*=quack_lab= card(t #42) */ SELECT * FROM t WHERE id < 10;
+----
+physical_plan	<REGEX>:.*SEQ_SCAN \(est=42\) [^\n]*Table: memory\.main\.t;.*
+
+# the hint may exceed the actual table size
+query II
+EXPLAIN (FORMAT compact) /*=quack_lab= card(t #1000000) */ SELECT * FROM t;
+----
+physical_plan	<REGEX>:.*SEQ_SCAN \(est=1000000\) [^\n]*Table: memory\.main\.t;.*
+
+# relation names are case-insensitive
+query II
+EXPLAIN (FORMAT compact) /*=quack_lab= CARD(T #42) */ SELECT * FROM t;
+----
+physical_plan	<REGEX>:.*SEQ_SCAN \(est=42\) [^\n]*Table: memory\.main\.t;.*
+
+query II
+EXPLAIN (FORMAT compact) /*=quack_lab= card(t #42) card(mi #24) */ SELECT count(*) FROM t JOIN mi ON t.id = mi.movie_id;
+----
+physical_plan	<REGEX>:.*(SEQ_SCAN \(est=42\) [^\n]*main\.t;.*SEQ_SCAN \(est=24\) [^\n]*main\.mi;|SEQ_SCAN \(est=24\) [^\n]*main\.mi;.*SEQ_SCAN \(est=42\) [^\n]*main\.t;).*
+
+# base table hints feed the join estimate: the join must not fall back to max(left, right) = 5000
+query II
+EXPLAIN (FORMAT compact) /*=quack_lab= card(t #42) */ SELECT count(*) FROM t JOIN mi ON t.id = mi.movie_id;
+----
+physical_plan	<!REGEX>:.*\n  HASH_JOIN \(est=5000\) .*
+
+#
+# join hints
+#
+
+query II
+EXPLAIN (FORMAT compact) /*=quack_lab= card(t mi #7) */ SELECT count(*) FROM t JOIN mi ON t.id = mi.movie_id;
+----
+physical_plan	<REGEX>:.*\n  HASH_JOIN \(est=7\) .*
+
+# the order of the relations within the hint does not matter
+query II
+EXPLAIN (FORMAT compact) /*=quack_lab= card(mi t #7) */ SELECT count(*) FROM t JOIN mi ON t.id = mi.movie_id;
+----
+physical_plan	<REGEX>:.*\n  HASH_JOIN \(est=7\) .*
+
+# implicit join syntax
+query II
+EXPLAIN (FORMAT compact) /*=quack_lab= card(t mi #7) */ SELECT count(*) FROM t, mi WHERE t.id = mi.movie_id;
+----
+physical_plan	<REGEX>:.*\n  HASH_JOIN \(est=7\) .*
+
+# relations can be referenced by their alias
+query II
+EXPLAIN (FORMAT compact) /*=quack_lab= card(a b #7) */ SELECT count(*) FROM t a JOIN mi b ON a.id = b.movie_id;
+----
+physical_plan	<REGEX>:.*\n  HASH_JOIN \(est=7\) .*
+
+#
+# base table + join hints
+#
+
+query II
+EXPLAIN (FORMAT compact) /*=quack_lab= card(t #42) card(mi #24) card(t mi #7) */ SELECT count(*) FROM t JOIN mi ON t.id = mi.movie_id;
+----
+physical_plan	<REGEX>:.*\n  HASH_JOIN \(est=7\) .*
+
+query II
+EXPLAIN (FORMAT compact) /*=quack_lab= card(t #42) card(mi #24) card(t mi #7) */ SELECT count(*) FROM t JOIN mi ON t.id = mi.movie_id;
+----
+physical_plan	<REGEX>:.*(SEQ_SCAN \(est=42\) [^\n]*main\.t;.*SEQ_SCAN \(est=24\) [^\n]*main\.mi;|SEQ_SCAN \(est=24\) [^\n]*main\.mi;.*SEQ_SCAN \(est=42\) [^\n]*main\.t;).*
+
+# the join hint wins regardless of where it appears in the hint block
+query II
+EXPLAIN (FORMAT compact) /*=quack_lab= card(t mi #7) card(t #42) card(mi #24) */ SELECT count(*) FROM t JOIN mi ON t.id = mi.movie_id;
+----
+physical_plan	<REGEX>:.*\n  HASH_JOIN \(est=7\) .*
+
+#
+# invalid hints
+#
+
+statement error
+EXPLAIN /*=quack_lab= card(nope #42) */ SELECT * FROM t;
+----
+Relation name not found: nope
+
+statement error
+EXPLAIN /*=quack_lab= card(t nope #42) */ SELECT count(*) FROM t JOIN mi ON t.id = mi.movie_id;
+----
+Relation name not found: nope

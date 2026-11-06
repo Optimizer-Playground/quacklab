@@ -1,0 +1,122 @@
+# name: test/sql/hinting/join_order_hints.test
+# description: JoinOrder() hints enforce the join tree, independent of the optimizer's own choice
+# group: [hinting]
+
+statement ok
+CREATE TABLE t(id INTEGER);
+
+statement ok
+CREATE TABLE mi(movie_id INTEGER);
+
+statement ok
+CREATE TABLE ci(movie_id INTEGER);
+
+statement ok
+CREATE TABLE mk(movie_id INTEGER);
+
+# all tables share the key domain 0..99, so no join filters are pushed into the scans and every scan sits
+# directly below its join in the plan
+statement ok
+INSERT INTO t SELECT range FROM range(100);
+
+statement ok
+INSERT INTO mi SELECT range % 100 FROM range(5000);
+
+statement ok
+INSERT INTO ci SELECT range % 100 FROM range(300);
+
+statement ok
+INSERT INTO mk SELECT range % 100 FROM range(1000);
+
+# hints must never change the query result
+query I
+SELECT count(*) FROM t JOIN mi ON t.id = mi.movie_id JOIN ci ON t.id = ci.movie_id;
+----
+15000
+
+query I
+/*=quack_lab= JoinOrder(((mi ci) t)) */ SELECT count(*) FROM t JOIN mi ON t.id = mi.movie_id JOIN ci ON t.id = ci.movie_id;
+----
+15000
+
+query I
+/*=quack_lab= JoinOrder(((t mi) (ci mk))) */ SELECT count(*) FROM t JOIN mi ON t.id = mi.movie_id JOIN ci ON t.id = ci.movie_id JOIN mk ON t.id = mk.movie_id;
+----
+150000
+
+#
+# left-deep join order
+#
+
+# (mi ci) joins the two largest tables first, which the optimizer would not pick by itself.
+# In a three-way left-deep plan, the scan directly below the top join is the relation that is joined last.
+query II
+EXPLAIN (FORMAT compact) /*=quack_lab= JoinOrder(((mi ci) t)) */ SELECT count(*) FROM t JOIN mi ON t.id = mi.movie_id JOIN ci ON t.id = ci.movie_id;
+----
+physical_plan	<REGEX>:.*\n  HASH_JOIN [^\n]*\n(    [^\n]*\n)*    SEQ_SCAN [^\n]*main\.t;.*
+
+query II
+EXPLAIN (FORMAT compact) /*=quack_lab= JoinOrder(((t ci) mi)) */ SELECT count(*) FROM t JOIN mi ON t.id = mi.movie_id JOIN ci ON t.id = ci.movie_id;
+----
+physical_plan	<REGEX>:.*\n  HASH_JOIN [^\n]*\n(    [^\n]*\n)*    SEQ_SCAN [^\n]*main\.mi;.*
+
+# no join predicate between mi and ci is written in the query, the hint relies on the transitive one
+query II
+EXPLAIN (FORMAT compact) /*=quack_lab= JoinOrder(((mi ci) t)) */ SELECT count(*) FROM t, mi, ci WHERE t.id = mi.movie_id AND t.id = ci.movie_id;
+----
+physical_plan	<REGEX>:.*\n  HASH_JOIN [^\n]*\n(    [^\n]*\n)*    SEQ_SCAN [^\n]*main\.t;.*
+
+# relations can be referenced by their alias
+query II
+EXPLAIN (FORMAT compact) /*=quack_lab= JoinOrder(((b c) a)) */ SELECT count(*) FROM t a JOIN mi b ON a.id = b.movie_id JOIN ci c ON a.id = c.movie_id;
+----
+physical_plan	<REGEX>:.*\n  HASH_JOIN [^\n]*\n(    [^\n]*\n)*    SEQ_SCAN [^\n]*main\.t;.*
+
+#
+# bushy join order
+#
+
+query II
+EXPLAIN (FORMAT compact) /*=quack_lab= JoinOrder(((t mi) (ci mk))) */ SELECT count(*) FROM t JOIN mi ON t.id = mi.movie_id JOIN ci ON t.id = ci.movie_id JOIN mk ON t.id = mk.movie_id;
+----
+physical_plan	<REGEX>:.*\n  HASH_JOIN [^\n]*\n    HASH_JOIN [^\n]*\n      SEQ_SCAN [^\n]*main\.(t|mi|ci|mk);[^\n]*\n      SEQ_SCAN [^\n]*main\.(t|mi|ci|mk);[^\n]*\n    HASH_JOIN [^\n]*\n      SEQ_SCAN [^\n]*main\.(t|mi|ci|mk);[^\n]*\n      SEQ_SCAN [^\n]*main\.(t|mi|ci|mk);.*
+
+query II
+EXPLAIN (FORMAT compact) /*=quack_lab= JoinOrder(((t mi) (ci mk))) */ SELECT count(*) FROM t JOIN mi ON t.id = mi.movie_id JOIN ci ON t.id = ci.movie_id JOIN mk ON t.id = mk.movie_id;
+----
+physical_plan	<REGEX>:.*\n    HASH_JOIN [^\n]*\n      SEQ_SCAN [^\n]*main\.(t|mi);[^\n]*\n      SEQ_SCAN [^\n]*main\.(t|mi);.*
+
+query II
+EXPLAIN (FORMAT compact) /*=quack_lab= JoinOrder(((t mi) (ci mk))) */ SELECT count(*) FROM t JOIN mi ON t.id = mi.movie_id JOIN ci ON t.id = ci.movie_id JOIN mk ON t.id = mk.movie_id;
+----
+physical_plan	<REGEX>:.*\n    HASH_JOIN [^\n]*\n      SEQ_SCAN [^\n]*main\.(ci|mk);[^\n]*\n      SEQ_SCAN [^\n]*main\.(ci|mk);.*
+
+#
+# join order + cardinality hints
+#
+
+# cardinality hints must neither override the enforced join order...
+query II
+EXPLAIN (FORMAT compact) /*=quack_lab= JoinOrder(((mi ci) t)) card(t mi #100000) card(mi ci #2) */ SELECT count(*) FROM t JOIN mi ON t.id = mi.movie_id JOIN ci ON t.id = ci.movie_id;
+----
+physical_plan	<REGEX>:.*\n  HASH_JOIN [^\n]*\n(    [^\n]*\n)*    SEQ_SCAN [^\n]*main\.t;.*
+
+# ...nor get lost on the enforced plan
+query II
+EXPLAIN (FORMAT compact) /*=quack_lab= JoinOrder(((mi ci) t)) card(t mi #100000) card(mi ci #2) */ SELECT count(*) FROM t JOIN mi ON t.id = mi.movie_id JOIN ci ON t.id = ci.movie_id;
+----
+physical_plan	<REGEX>:.*\n    HASH_JOIN \(est=2\) .*
+
+query II
+EXPLAIN (FORMAT compact) /*=quack_lab= JoinOrder(((mi ci) t)) card(t #5) */ SELECT count(*) FROM t JOIN mi ON t.id = mi.movie_id JOIN ci ON t.id = ci.movie_id;
+----
+physical_plan	<REGEX>:.*SEQ_SCAN \(est=5\) [^\n]*main\.t;.*
+
+#
+# invalid hints
+#
+
+statement error
+EXPLAIN /*=quack_lab= JoinOrder(((t nope) mi)) */ SELECT count(*) FROM t JOIN mi ON t.id = mi.movie_id;
+----
+Table identifier not found

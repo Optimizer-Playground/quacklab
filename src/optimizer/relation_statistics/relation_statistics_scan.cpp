@@ -139,17 +139,6 @@ RelationStats RelationStatisticsHelper::ExtractGetStats(LogicalGet &get, ClientC
 	auto cardinality_after_filters = base_table_cardinality;
 	result.table_name = get.GetTable() ? get.GetTable()->name : Identifier(get.GetName());
 
-	// !!! quacklab addition
-	auto planner_hints = tud::HintingContext::CurrentPlannerHints();
-	auto card_hint = planner_hints->GetCardinalityHint(get);
-	if (card_hint) {
-		result.cardinality = LossyNumericCast<idx_t>(card_hint.value());
-		result.stats_initialized = true;
-		get.estimated_cardinality = result.cardinality;
-		get.has_estimated_cardinality = true;
-		return result;
-	}
-	// !!! end quacklab addition
 
 	if (get.table_filters.HasFilters()) {
 		bool has_non_optional_filters = false;
@@ -179,6 +168,17 @@ RelationStats RelationStatisticsHelper::ExtractGetStats(LogicalGet &get, ClientC
 		}
 	}
 
+	// !!! quacklab addition: a hinted scan still needs its column stats, otherwise the relation statistics
+	// extractor rejects it (bindings mismatch) and the join order optimizer never sees the join.
+	auto planner_hints = tud::HintingContext::CurrentPlannerHints();
+	auto card_hint = planner_hints->GetCardinalityHint(get);
+	if (card_hint) {
+		cardinality_after_filters = LossyNumericCast<idx_t>(card_hint.value());
+		get.estimated_cardinality = cardinality_after_filters;
+		get.has_estimated_cardinality = true;
+	}
+	// !!! end quacklab addition
+
 	result.cardinality = cardinality_after_filters;
 	for (auto &binding : get.GetColumnBindings()) {
 		if (binding.table_index != get.table_index) {
@@ -190,11 +190,16 @@ RelationStats RelationStatisticsHelper::ExtractGetStats(LogicalGet &get, ClientC
 		if (distinct_count.distinct_count == 0) {
 			distinct_count = DistinctCount(cardinality_after_filters, DistinctCountSource::CARDINALITY);
 		}
+		// !!! quacklab addition: a hinted relation cannot have more distinct values than rows
+		if (card_hint && distinct_count.distinct_count > cardinality_after_filters) {
+			distinct_count = DistinctCount(cardinality_after_filters, DistinctCountSource::CARDINALITY);
+		}
+		// !!! end quacklab addition
 		result.columns.emplace_back(binding, distinct_count,
 		                            Identifier(get.GetName() + "." + get.GetColumnName(column_id)));
 	}
 	result.stats_initialized = true;
-	D_ASSERT(base_table_cardinality >= cardinality_after_filters);
+	D_ASSERT(card_hint || base_table_cardinality >= cardinality_after_filters);
 	return result;
 }
 
