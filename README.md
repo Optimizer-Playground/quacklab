@@ -11,6 +11,9 @@ The `quacklab-patches` branch is used to track our changes to upstream DuckDB. I
 For the DuckDB versions that we support, dedicated `quacklab-[DuckDB release]` branches exist, such as `quacklab-v1.4-andium`.
 These branches are used to apply our quacklab patches to the specific DuckDB release. Use these branches to build quacklab.
 
+**Our development is currently focused on DuckDB v2.0 (Cyanoptera).**
+**Older releases might contain bugs that have been fixed in later releases.**
+
 ## Installation
 
 quacklab can be installed like vanilla DuckDB. In short, you need the following to build quacklab:
@@ -44,13 +47,27 @@ explain /*=quack_lab= card(t #42) card(mi #24) */ select count(*) from title t j
 The following hints are supported:
 
 **`JoinOrder`** controls the join order of the query. The syntax is: `JoinOrder(((t1 t2) t3))`. Tables can be referenced by
-their name or alias. You can also force bushy plans like so: `((t1 t2) (t3 t4))`. Notice that the first pair of paranthesis
-is always required, i.e. for two tables you must use `JoinOrder((t1 t2))` and not ~~`JoinOrder(t1 t2)`~~.
+their name or alias. You can also force bushy plans like so: `((t1 t2) (t3 t4))`. Notice that the first pair of parentheses
+is always required, i.e. for two tables you must use `JoinOrder((t1 t2))` and not ~~`JoinOrder(t1 t2)`~~. The hint must
+reference every table of the join exactly once, otherwise the query fails with an error.
 
 **`Card`** sets the cardinality estimate for a particular intermediate. The syntax is: `Card(t #10000)` where the first part
 describes the intermediate and the second part after the `#` sets the cardinality. Tables can be referenced by their name or
 alias. You can set the cardinality of base tables (`Card(t1 #42)`) as well as joins (`Card(t1 t2 t3 #42000)`). All
 cardinalities refer to the _output cardinality_, i.e. after all applicable predicates.
+
+A hinted cardinality is used as-is for its intermediate. Intermediates without a hint of their own still take the hints on
+smaller intermediates into account[^2]. Base table hints replace the table's cardinality in DuckDB's estimation formula. Join
+hints scale DuckDB's estimate by how much they deviate from DuckDB's estimate for the hinted join. For example, given
+`Card(t1 t2 #10)` and a DuckDB estimate of 5,000 rows for `t1 ⋈ t2`, the estimate for `t1 ⋈ t2 ⋈ t3` is multiplied by
+10 / 5,000. This applies to every intermediate that contains `t1` and `t2`, regardless of the join order. If multiple
+join hints apply to the same intermediate:
+
+- hints on disjoint sets of tables are all applied, e.g. `Card(t1 t2 #10)` and `Card(t3 t4 #30)` for `t1 ⋈ t2 ⋈ t3 ⋈ t4`
+- if hints overlap, the hint covering more tables wins. Among hints of the same size, the one that leads to the larger
+  estimate wins. Hints that overlap an already applied hint are ignored.
+
+An estimate obtained this way does not drop below 1 row, unless DuckDB's own estimate was already 0.
 
 **`NestLoop`**, **`HashJoin`**, **`MergeJoin`** control the physical operator that is used to compute a particular join[^1].
 The syntax is `NestLoop(t1 t2 t3)`. Tables can be referenced by their name or alias.
@@ -70,4 +87,8 @@ java -jar antlr-4.13.2-complete.jar -Dlanguage=Cpp -Xexact-output-dir -o ../../s
 [^1]: support for this is currently very limited due to restrictions of the DuckDB execution engine. For example, join
       operators are not implemented as general-purpose operators. Instead, they are tied to specific types of join predicates.
       Quacklab implements the logic to produce query plans with the desired operators, however these plans usually cannot be
-      executed (as of DuckDB v1.4-andium).
+      executed (as of DuckDB v2.0-cyanoptera).
+[^2]: vanilla DuckDB computes the cardinality of a larger intermediate always based on the base tables, not based on the
+      cardinalities of smaller intermediates. However, this would essentially break all our cardinality estimation if we
+      would hint a small intermediate to have a larger cardinality than vanilla DuckDB estimates. This estimate would be gone
+      again.
